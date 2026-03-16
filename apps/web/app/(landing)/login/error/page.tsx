@@ -16,6 +16,11 @@ import { getAndClearAuthErrorCookie } from "@/utils/auth-cookies";
 import { BRAND_NAME, SUPPORT_EMAIL } from "@/utils/branding";
 
 const errorMessages: Record<string, { title: string; description: string }> = {
+  email_not_allowed: {
+    title: "Account Not Allowed",
+    description:
+      "This email address is not on the allowlist for this self-hosted Inbox Zero instance. Sign in with an approved account or ask the administrator to add your email address.",
+  },
   email_not_found: {
     title: "Account Not Authorized",
     description:

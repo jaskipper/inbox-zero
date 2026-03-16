@@ -77,6 +77,48 @@ const socialProviders = {
     : {}),
 };
 
+function normalizeEmail(email?: string | null) {
+  return email?.trim().toLowerCase();
+}
+
+export function isEmailAllowed(email?: string | null) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return false;
+
+  const allowedEmails = env.ALLOWED_EMAILS;
+  if (!allowedEmails?.length) return true;
+
+  return allowedEmails.includes(normalizedEmail);
+}
+
+async function rejectUnauthorizedUser({
+  userId,
+  email,
+  location,
+}: {
+  userId: string;
+  email: string;
+  location: string;
+}) {
+  logger.warn("[auth] Rejected non-allowlisted email", { email, location });
+
+  try {
+    await prisma.user.delete({ where: { id: userId } });
+  } catch (cleanupError) {
+    logger.error("[auth] Failed to clean up unauthorized user", {
+      userId,
+      email,
+      location,
+      cleanupError,
+    });
+    captureException(cleanupError, {
+      extra: { userId, email, location, cleanup: "user.delete" },
+    });
+  }
+
+  throw new Error("email_not_allowed");
+}
+
 export const betterAuthConfig = betterAuth({
   advanced: {
     database: {
@@ -171,15 +213,18 @@ export const betterAuthConfig = betterAuth({
         after: async (user) => {
           if (isLocalBypassUserEmail(user.email)) return;
 
-          await postSignUp({
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            image: user.image,
-          }).catch((error) => {
+          try {
+            await postSignUp({
+              id: user.id,
+              email: user.email,
+              name: user.name,
+              image: user.image,
+            });
+          } catch (error) {
             logger.error("Error posting sign up", { error, user });
             captureException(error, { extra: { user } });
-          });
+            throw error;
+          }
         },
       },
     },
@@ -216,6 +261,16 @@ async function postSignUp({
   name?: string | null;
   image?: string | null;
 }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) throw new Error("email_not_allowed");
+  if (!isEmailAllowed(normalizedEmail)) {
+    await rejectUnauthorizedUser({
+      userId,
+      email: normalizedEmail,
+      location: "postSignUp",
+    });
+  }
+
   const loops = async () => {
     const account = await prisma.account
       .findFirst({
@@ -442,7 +497,15 @@ async function handleLinkAccount(account: Account) {
       throw new Error("Primary email not found for linked account.");
     }
 
-    const normalizedEmail = primaryEmail.trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(primaryEmail);
+    if (!normalizedEmail) throw new Error("email_not_allowed");
+    if (!isEmailAllowed(normalizedEmail)) {
+      logger.warn("[linkAccount] Rejected non-allowlisted email", {
+        userId: account.userId,
+        email: normalizedEmail,
+      });
+      throw new Error("email_not_allowed");
+    }
 
     // Check if email already belongs to a different user
     const existingEmailAccount = await prisma.emailAccount.findUnique({
@@ -674,8 +737,20 @@ export async function saveTokens({
   }
 }
 
-export const auth = async () =>
-  betterAuthConfig.api.getSession({ headers: await headers() });
+export const auth = async () => {
+  const session = await betterAuthConfig.api.getSession({
+    headers: await headers(),
+  });
+
+  if (session?.user?.email && !isEmailAllowed(session.user.email)) {
+    logger.warn("[auth] Blocking session for non-allowlisted email", {
+      email: session.user.email,
+    });
+    return null;
+  }
+
+  return session;
+};
 
 async function autoJoinOrganization(emailAccountId: string) {
   const orgs = await prisma.organization.findMany({

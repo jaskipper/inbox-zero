@@ -175,6 +175,15 @@ export const env = createEnv({
       .string()
       .optional()
       .transform((value) => value?.split(",")),
+    ALLOWED_EMAILS: z
+      .string()
+      .optional()
+      .transform((value) =>
+        value
+          ?.split(",")
+          .map((email) => email.trim().toLowerCase())
+          .filter(Boolean),
+      ),
     WEBHOOK_URL: z.string().optional(),
     INTERNAL_API_URL: z.string().optional(),
     INTERNAL_API_KEY: z.string(),
