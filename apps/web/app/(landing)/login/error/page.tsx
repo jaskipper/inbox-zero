@@ -123,5 +123,9 @@ function resolveErrorCode({
     return "org_invite_invalid_code";
   }
 
+  if (errorCode === "unable_to_create_user") {
+    return "email_not_allowed";
+  }
+
   return errorCode;
 }
